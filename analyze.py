@@ -14,6 +14,9 @@ HTTPS_PORT = 443
 
 ip_to_name = dict()
 
+def calc_time(pkt_metadata):
+    return (pkt_metadata.tshigh << 32) | pkt_metadata.tslow
+
 def process_packet(pkt_data, pkt_metadata):
     # Handle ethernet layer
     ether_pkt = Ether(pkt_data)
@@ -57,15 +60,17 @@ def process_packet(pkt_data, pkt_metadata):
     tls_pkt = tcp_pkt[TLS]
     tls_len = tls_pkt.len
     server_name = ip_to_name[server_ip] if server_ip in ip_to_name else server_ip
-    address = '{} -> client'.format(server_name) if from_server else 'client -> {}'.format(server_name)
+    pkt_time = calc_time(pkt_metadata)
+    preamble = '[{}]: '.format(timestamp(pkt_time, pkt_metadata.tsresol))
+    preamble += '{} -> client'.format(server_name) if from_server else 'client -> {}'.format(server_name)
     if TLSChangeCipherSpec in tls_pkt:
-        log('{}: Change cipher spec.'.format(address))
+        log('{}: Change cipher spec.'.format(preamble))
     elif TLSAlert in tls_pkt:
-        log('{}: Alert.'.format(address))
+        log('{}: Alert.'.format(preamble))
     elif TLSApplicationData in tls_pkt:
-        log('{}: {} bytes of data.'.format(address, tls_len))
+        log('{}: {} bytes of data.'.format(preamble, tls_len))
     elif TLSClientHello in tls_pkt:
-        log('{}: Handshake.'.format(address))
+        log('{}: Handshake.'.format(preamble))
         shake = tls_pkt[TLSClientHello]
         if ServerName in shake:
             ext_data = shake[ServerName]
