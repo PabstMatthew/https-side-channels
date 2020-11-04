@@ -1,0 +1,5 @@
+__pycache__
+*.pcap
+*.pcapng
+notes.md
+project-plan.md
