@@ -9,6 +9,7 @@ from scapy.layers.tls.all import *
 import os
 import sys
 import statistics
+import re
 
 ''' Global constants '''
 TARGET_IP = '192.168.1.67' # client IP
@@ -17,16 +18,27 @@ SEGMENT_FILTER_THRESHOLD = 0.2 # if a cluster is 20% the size of the median, it 
 
 ''' Stores features for clustering and prediction '''
 class PacketInfo():
-    def __init__(self, time_us, size):
-        self.time_us = time_us
+    def __init__(self, time_us, size, host, from_server):
+        self.time = time_us
         self.size = size
+        self.host = host
+        self.from_server = from_server
+
+    def __str__(self):
+        if self.from_server:
+            return '[{}]: {} bytes from {}'.format(timestamp(self.time), self.size, self.host)
+        else:
+            return '[{}]: {} bytes to {}'.format(timestamp(self.time), self.size, self.host)
+
+    def __repr__(self):
+        return str({'size':self.size, 'time':self.time, 'host':self.host, 'from_server':self.from_server})
 
 ''' Driver class for analyzing packet captures '''
 class PacketAnalyzer():
     ''' Analyzes the packet capture on initialization '''
     def __init__(self, pcap_fname):
         self.ip_to_name = dict()
-        self.name_to_pkts = dict()
+        self.pkts = []
         dbg('Analyzing pcap file "{}".'.format(pcap_fname))
         tls_cnt = 0
         for (pkt_data, pkt_metadata,) in RawPcapReader(pcap_fname):
@@ -96,10 +108,8 @@ class PacketAnalyzer():
             log('{}: Alert.'.format(preamble))
         elif TLSApplicationData in tls_pkt:
             log('{}: {} bytes of data.'.format(preamble, tls_len))
-            if not server_name in self.name_to_pkts:
-                self.name_to_pkts[server_name] = []
-            pkt_info = PacketInfo(pkt_time, tls_len)
-            self.name_to_pkts[server_name].append(pkt_info)
+            pkt_info = PacketInfo(pkt_time, tls_len, server_name, from_server)
+            self.pkts.append(pkt_info)
         elif TLSClientHello in tls_pkt:
             log('{}: Handshake.'.format(preamble))
             shake = tls_pkt[TLSClientHello]
@@ -112,20 +122,49 @@ class PacketAnalyzer():
                     log('SNI: {} = {}.'.format(name, server_ip))
                     self.ip_to_name[server_ip] = name
 
+    def _cluster_within_host(self):
+        clusters = []
+        self.pkts.sort(key=lambda pkt: pkt.time)
+        pkt_times = list(x.time for x in self.pkts)
+        time_segments = segment_times(pkt_times)
+        med_size = statistics.median(list(len(seg) for seg in time_segments))
+        cur_pkt = 0
+        for time_segment in time_segments:
+            seg_size = len(time_segment)
+            if seg_size/med_size > SEGMENT_FILTER_THRESHOLD:
+                start_time = min(time_segment)
+                end_time = max(time_segment)
+                log('\tFound cluster of {} requests starting at {} and ending at {}.'.format(
+                    seg_size, timestamp(start_time), timestamp(end_time)))
+                # reconstruct the segment
+                segment = self.pkts[cur_pkt:cur_pkt+seg_size]
+                clusters.append(segment)
+            else:
+                log('\tIgnoring ephemeral packet cluster of size {}.'.format(seg_size))
+            cur_pkt += seg_size
+        return clusters
+
+    def _analyze_cluster(self, cluster):
+        # ignore hosts with no domain name
+        cluster = list(filter(lambda pkt: not re.match('\d+\.\d+\.\d+\.\d+', pkt.host), cluster))
+        cluster_size = len(cluster)
+        if cluster_size == 0:
+            return
+        log('Cluster of {} packets beginning at {}:'.format(cluster_size, timestamp(cluster[0].time)))
+        # check which hosts have been visited in this cluster
+        hosts = set()
+        for pkt in cluster:
+            hosts.add(pkt.host)
+        log('Hosts accessed: {}'.format(hosts))
+        # print all packets
+        for pkt in cluster:
+            log('\t{}'.format(str(pkt)))
+
     ''' Cluster and print results '''
     def stats(self):
-        for name, pkt_info in self.name_to_pkts.items():
-            pkt_times = list(x.time_us for x in pkt_info)
-            times = segment_times(pkt_times)
-            log('Results for domain "{}":'.format(name))
-            med_size = statistics.median(list(len(seg) for seg in times))
-            for segment in times:
-                seg_size = len(segment)
-                if seg_size/med_size > SEGMENT_FILTER_THRESHOLD:
-                    log('\tFound cluster of {} requests starting at {} and ending at {}.'.format(
-                        seg_size, timestamp(min(segment)), timestamp(max(segment))))
-                else:
-                    log('\tIgnoring ephemeral packet cluster of size {}.'.format(seg_size))
+        clusters = self._cluster_within_host()
+        for cluster in clusters:
+            self._analyze_cluster(cluster)
 
 def main():
     # Check args
