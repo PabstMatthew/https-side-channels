@@ -1,7 +1,8 @@
-import time
+from datetime import datetime
 
 DEBUG = True
 LOG = True
+THRESHOLD = 500 * 1000
 
 BLUE = '\033[94m'
 GREEN = '\u001b[32m'
@@ -21,8 +22,23 @@ def err(msg):
     print(RED+BOLD+'[ERR] '+END+msg)
     assert False
 
-def timestamp(ts, resol):
-    ts_sec = ts // resol
-    ts_subsec = ts % resol
-    ts_sec_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts_sec))
-    return '{}.{}'.format(ts_sec_str, ts_subsec)
+def timestamp(ts, resol=1000000):
+    ts_sec = ts / resol
+    return datetime.fromtimestamp(ts_sec).strftime('%Y-%m-%d %H:%M:%S.%f')
+
+def segment_times(times):
+    if len(times) <= 1:
+        return [times]
+    times.sort()
+    result = []
+    segment = []
+    for i in range(1, len(times)):
+        segment.append(times[i-1])
+        diff = (times[i]-times[i-1])
+        if diff > THRESHOLD:
+            result.append(segment)
+            segment = []
+    segment.append(times[-1])
+    result.append(segment)
+    return result
+
