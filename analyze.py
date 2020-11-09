@@ -1,10 +1,11 @@
-#!/usr/local/bin/python3
 from utils import *
 
 from scapy.utils import RawPcapReader
 from scapy.layers.l2 import Ether
 from scapy.layers.inet import IP, TCP
 from scapy.layers.tls.all import *
+from scapy.layers.dot11 import *
+from scapy.all import sniff
 
 import os
 import sys
@@ -12,7 +13,7 @@ import statistics
 import re
 
 ''' Global constants '''
-TARGET_IP = '192.168.1.67' # client IP
+TARGET_IP = '192.168.144.154' # client IP
 HTTPS_PORT = 443 # assuming HTTPS traffic should be on port 443
 SEGMENT_FILTER_THRESHOLD = 0.2 # if a cluster is 20% the size of the median, it is ignored
 
@@ -36,13 +37,13 @@ class PacketInfo():
 ''' Driver class for analyzing packet captures '''
 class PacketAnalyzer():
     ''' Analyzes the packet capture on initialization '''
-    def __init__(self, pcap_fname):
+    def __init__(self, pkts):
         self.ip_to_name = dict()
         self.pkts = []
-        dbg('Analyzing pcap file "{}".'.format(pcap_fname))
+        dbg('Analyzing {} packets.'.format(len(pkts)))
         tls_cnt = 0
-        for (pkt_data, pkt_metadata,) in RawPcapReader(pcap_fname):
-            if self._process_packet(pkt_data, pkt_metadata):
+        for pkt in pkts:
+            if self._process_packet(pkt):
                 tls_cnt += 1
         dbg('Analyzed {} TLS packets.'.format(tls_cnt))
     
@@ -50,23 +51,9 @@ class PacketAnalyzer():
     def _calc_time(pkt_metadata):
         return (pkt_metadata.tshigh << 32) | pkt_metadata.tslow
 
-    ''' Helper to process a single packet from the capture '''
-    def _process_packet(self, pkt_data, pkt_metadata):
-        # Handle ethernet layer
-        ether_pkt = Ether(pkt_data)
-        if 'type' not in ether_pkt.fields:
-            # Disregard LLC (logical link control) frames
-            return False
-        if ether_pkt.type != 0x0800:
-            # Disregard non-IPv4 packets
-            return False
-
-        ip_pkt = ether_pkt[IP]
-        if ip_pkt.proto != 6:
-            # Disregard non-TCP packet
-            return False
-        
+    def _process_packet(self, pkt):
         # Handle IP layer
+        ip_pkt = pkt[IP]
         dst_ip = ip_pkt.dst
         src_ip = ip_pkt.src
         from_server = dst_ip == TARGET_IP
@@ -80,27 +67,25 @@ class PacketAnalyzer():
 
         # Handle TCP layer
         tcp_pkt = ip_pkt[TCP]
+        pkt_time = tcp_pkt.time
         src_port = tcp_pkt.sport
         dst_port = tcp_pkt.dport
         protocol_port = src_port if from_server else dst_port
-        if protocol_port != HTTPS_PORT:
-            err('Protocol port "{}" does not match expected default HTTPS port 443!'.format(protocol_port))
         if TLS not in tcp_pkt:
             return False
 
         # Handle TLS layer
-        self._process_tls_packet(pkt_metadata, tcp_pkt, from_server, server_ip)
+        self._process_tls_packet(pkt_time, tcp_pkt, from_server, server_ip)
         return True
 
     ''' Helper to process a TLS packet specifically '''
-    def _process_tls_packet(self, pkt_metadata, tcp_pkt, from_server, server_ip):
+    def _process_tls_packet(self, pkt_time, tcp_pkt, from_server, server_ip):
         # for more info on TLS packets check this out: 
         # http://blog.fourthbit.com/2014/12/23/traffic-analysis-of-an-ssl-slash-tls-session/
         tls_pkt = tcp_pkt[TLS]
         tls_len = tls_pkt.len
         server_name = self.ip_to_name[server_ip] if server_ip in self.ip_to_name else server_ip
-        pkt_time = PacketAnalyzer._calc_time(pkt_metadata)
-        preamble = '[{}]: '.format(timestamp(pkt_time, resol=pkt_metadata.tsresol))
+        preamble = '[{}]: '.format(timestamp(pkt_time))
         preamble += '{} -> client'.format(server_name) if from_server else 'client -> {}'.format(server_name)
         if TLSChangeCipherSpec in tls_pkt:
             log('{}: Change cipher spec.'.format(preamble))
@@ -168,14 +153,17 @@ class PacketAnalyzer():
 
 def main():
     # Check args
+    '''
     if len(sys.argv) < 2:
         err('Incorrect # of args! Expected `./analyze.py <pcap-filename>`')
     pcap_fname = sys.argv[1]
     if not os.path.exists(pcap_fname):
         err('pcap file "{}" does not exist!'.format(pcap_fname))
+    '''
 
     # Analyze packet capture
-    analysis = PacketAnalyzer(pcap_fname)
+    pkts = sniff(iface='wlp4s0mon', count=100, filter='tcp and port 443 and host {}'.format(TARGET_IP))
+    analysis = PacketAnalyzer(pkts)
     analysis.stats()
 
 if __name__ == '__main__':

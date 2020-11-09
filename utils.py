@@ -23,8 +23,7 @@ def err(msg):
     assert False
 
 def timestamp(ts, resol=1000000):
-    ts_sec = ts / resol
-    return datetime.fromtimestamp(ts_sec).strftime('%Y-%m-%d %H:%M:%S.%f')
+    return datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S.%f')
 
 def segment_times(times):
     if len(times) <= 1:
