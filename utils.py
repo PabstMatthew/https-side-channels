@@ -22,8 +22,8 @@ def err(msg):
     print(RED+BOLD+'[ERR] '+END+msg)
     assert False
 
-def timestamp(ts, resol=1000000):
-    return datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S.%f')
+def timestamp(ts):
+    return datetime.fromtimestamp(float(ts)).strftime('%Y-%m-%d %H:%M:%S.%f')
 
 def segment_times(times):
     if len(times) <= 1:

@@ -11,10 +11,9 @@ import os
 import sys
 import statistics
 import re
+import argparse
 
 ''' Global constants '''
-TARGET_IP = '192.168.144.154' # client IP
-HTTPS_PORT = 443 # assuming HTTPS traffic should be on port 443
 SEGMENT_FILTER_THRESHOLD = 0.2 # if a cluster is 20% the size of the median, it is ignored
 
 ''' Stores features for clustering and prediction '''
@@ -37,7 +36,8 @@ class PacketInfo():
 ''' Driver class for analyzing packet captures '''
 class PacketAnalyzer():
     ''' Analyzes the packet capture on initialization '''
-    def __init__(self, pkts):
+    def __init__(self, pkts, args):
+        self.args = args
         self.ip_to_name = dict()
         self.pkts = []
         dbg('Analyzing {} packets.'.format(len(pkts)))
@@ -52,12 +52,14 @@ class PacketAnalyzer():
         return (pkt_metadata.tshigh << 32) | pkt_metadata.tslow
 
     def _process_packet(self, pkt):
+        pkt_time = pkt.time
+
         # Handle IP layer
         ip_pkt = pkt[IP]
         dst_ip = ip_pkt.dst
         src_ip = ip_pkt.src
-        from_server = dst_ip == TARGET_IP
-        from_client = src_ip == TARGET_IP
+        from_server = dst_ip == self.args.target
+        from_client = src_ip == self.args.target
         server_ip = src_ip if from_server else dst_ip
         client_ip = src_ip if from_client else dst_ip
         if not from_server and not from_client:
@@ -67,7 +69,6 @@ class PacketAnalyzer():
 
         # Handle TCP layer
         tcp_pkt = ip_pkt[TCP]
-        pkt_time = tcp_pkt.time
         src_port = tcp_pkt.sport
         dst_port = tcp_pkt.dport
         protocol_port = src_port if from_server else dst_port
@@ -151,19 +152,30 @@ class PacketAnalyzer():
         for cluster in clusters:
             self._analyze_cluster(cluster)
 
-def main():
-    # Check args
-    '''
-    if len(sys.argv) < 2:
-        err('Incorrect # of args! Expected `./analyze.py <pcap-filename>`')
-    pcap_fname = sys.argv[1]
-    if not os.path.exists(pcap_fname):
-        err('pcap file "{}" does not exist!'.format(pcap_fname))
-    '''
+def parse_args():
+    parser = argparse.ArgumentParser(description=
+            'Sniff and or analyze packet captures to predict browing traffic over HTTPS.')
+    parser.add_argument('-i', '--interface', type=str, help=
+            'Specifies the interface to sniff on.')
+    parser.add_argument('-f', '--file', type=str, help=
+            'Specifies a pcap file to read from instead of sniffing WiFi traffic.')
+    parser.add_argument('-t', '--target', type=str, required=True, help=
+            'Specifies a target IP to sniff/analyze.')
+    parser.add_argument('-p', '--port', type=int, default=443, help=
+            'Specifies the port to sniff and analyze traffic on.')
+    return parser.parse_args()
 
-    # Analyze packet capture
-    pkts = sniff(iface='wlp4s0mon', count=100, filter='tcp and port 443 and host {}'.format(TARGET_IP))
-    analysis = PacketAnalyzer(pkts)
+def main():
+    args = parse_args()
+    if args.file:
+        # Read packets from file
+        pkts = sniff(offline=args.file)
+    else:
+        # Sniff packets 
+        pkts = sniff(iface=args.interface, count=100, filter='tcp and port {} and host {}'.format(args.port, args.target))
+
+    # Analyze packets
+    analysis = PacketAnalyzer(pkts, args)
     analysis.stats()
 
 if __name__ == '__main__':
