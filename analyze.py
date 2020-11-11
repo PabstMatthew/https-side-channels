@@ -1,20 +1,44 @@
-from utils import *
+import utils
+from utils import dbg, log, err
 
-from scapy.utils import RawPcapReader
 from scapy.layers.l2 import Ether
 from scapy.layers.inet import IP, TCP
 from scapy.layers.tls.all import *
 from scapy.layers.dot11 import *
-from scapy.all import sniff
+from scapy.all import AsyncSniffer, sniff
 
 import os
 import sys
 import statistics
 import re
 import argparse
+import subprocess
 
 ''' Global constants '''
 SEGMENT_FILTER_THRESHOLD = 0.2 # if a cluster is 20% the size of the median, it is ignored
+IGNORE_HOSTS = {'content-signature-2.cdn.mozilla.net', 
+                'tracking-protection.cdn.mozilla.net',
+                'getpocket.cdn.mozilla.net',
+                'firefox.settings.services.mozilla.com',
+                'location.services.mozilla.com',
+                'spocs.getpocket.com',
+                'shavar.services.mozilla.com'}
+
+class Profiler():
+    def __init__(self, args):
+        self.args = args
+
+    def profile(self):
+        url = self.args.profile
+        log('Profiling URL "{}".'.format(url))
+        sudo_uid = os.getenv("SUDO_UID")
+        command = 'sudo -u #{} python3 browser.py {}'.format(sudo_uid, url)
+        sniffer = AsyncSniffer(iface=self.args.interface, 
+                               filter='tcp and port {} and host {}'.format(self.args.port, self.args.target))
+        sniffer.start()
+        subprocess.run(command.split())
+        sniffer.stop()
+        return sniffer.results
 
 ''' Stores features for clustering and prediction '''
 class PacketInfo():
@@ -89,20 +113,20 @@ class PacketAnalyzer():
         preamble = '[{}]: '.format(timestamp(pkt_time))
         preamble += '{} -> client'.format(server_name) if from_server else 'client -> {}'.format(server_name)
         if TLSChangeCipherSpec in tls_pkt:
-            log('{}: Change cipher spec.'.format(preamble))
+            dbg('{}: Change cipher spec.'.format(preamble))
         elif TLSAlert in tls_pkt:
-            log('{}: Alert.'.format(preamble))
+            dbg('{}: Alert.'.format(preamble))
         elif TLSApplicationData in tls_pkt:
-            log('{}: {} bytes of data.'.format(preamble, tls_len))
+            dbg('{}: {} bytes of data.'.format(preamble, tls_len))
             pkt_info = PacketInfo(pkt_time, tls_len, server_name, from_server)
             self.pkts.append(pkt_info)
         elif TLSClientHello in tls_pkt:
-            log('{}: Handshake.'.format(preamble))
+            dbg('{}: Handshake.'.format(preamble))
             shake = tls_pkt[TLSClientHello]
             if ServerName in shake:
                 ext_data = shake[ServerName]
                 if ext_data.nametype == 0xff:
-                    log('SNI disable request from {}.'.format(server_ip))
+                    dbg('SNI disable request from {}.'.format(server_ip))
                 else:
                     name = str(ext_data.servername, 'utf-8')
                     log('SNI: {} = {}.'.format(name, server_ip))
@@ -133,6 +157,7 @@ class PacketAnalyzer():
     def _analyze_cluster(self, cluster):
         # ignore hosts with no domain name
         cluster = list(filter(lambda pkt: not re.match('\d+\.\d+\.\d+\.\d+', pkt.host), cluster))
+        cluster = list(filter(lambda pkt: not pkt.host in IGNORE_HOSTS, cluster))
         cluster_size = len(cluster)
         if cluster_size == 0:
             return
@@ -144,7 +169,7 @@ class PacketAnalyzer():
         log('Hosts accessed: {}'.format(hosts))
         # print all packets
         for pkt in cluster:
-            log('\t{}'.format(str(pkt)))
+            dbg('\t{}'.format(str(pkt)))
 
     ''' Cluster and print results '''
     def stats(self):
@@ -161,15 +186,24 @@ def parse_args():
             'Specifies a pcap file to read from instead of sniffing WiFi traffic.')
     parser.add_argument('-t', '--target', type=str, required=True, help=
             'Specifies a target IP to sniff/analyze.')
-    parser.add_argument('-p', '--port', type=int, default=443, help=
+    parser.add_argument('-p', '--profile', type=str, default='https://en.wikipedia.org', help=
             'Specifies the port to sniff and analyze traffic on.')
+    parser.add_argument('--port', type=int, default=443, help=
+            'Specifies the port to sniff and analyze traffic on.')
+    parser.add_argument('-d', '--debug', action='store_true', default=False, help=
+            'Prints debug information.')
     return parser.parse_args()
 
 def main():
     args = parse_args()
+    utils.DEBUG = args.debug
     if args.file:
         # Read packets from file
         pkts = sniff(offline=args.file)
+    elif args.profile:
+        # Profile a URL
+        p = Profiler(args)
+        pkts = p.profile()
     else:
         # Sniff packets 
         pkts = sniff(iface=args.interface, count=100, filter='tcp and port {} and host {}'.format(args.port, args.target))

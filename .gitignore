@@ -3,3 +3,4 @@ __pycache__
 *.pcapng
 notes.md
 project-plan.md
+geckodriver.log
