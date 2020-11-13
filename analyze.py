@@ -82,11 +82,15 @@ class PacketAnalyzer():
         server_ip = src_ip if from_server else dst_ip
         client_ip = src_ip if from_client else dst_ip
         if not from_server and not from_client:
-            err('Packet does not appear to involve the client! src: {} dst: {}'.format(src_ip, dst_ip))
+            # Packet doesn't involve the target
+            return False
         elif from_server and from_client:
-            err('Packet does not appear to involve a server! src: {} dst: {}'.format(src_ip, dst_ip))
+            # Packet doesn't involve the target
+            return False
 
         # Handle TCP layer
+        if not TCP in ip_pkt:
+            return False
         tcp_pkt = ip_pkt[TCP]
         src_port = tcp_pkt.sport
         dst_port = tcp_pkt.dport
