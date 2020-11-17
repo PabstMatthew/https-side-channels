@@ -6,32 +6,15 @@ from scapy.layers.l2 import Ether
 from scapy.layers.inet import IP, TCP
 from scapy.layers.tls.all import *
 from scapy.layers.dot11 import *
-from scapy.all import AsyncSniffer, sniff
+from scapy.all import sniff
 
 import os
 import sys
 import statistics
 import re
-import argparse
-import subprocess
 
 ''' Global constants '''
 SEGMENT_FILTER_THRESHOLD = 0.2 # if a cluster is 20% the size of the median, it is ignored
-class Profiler():
-    def __init__(self, args):
-        self.args = args
-
-    def profile(self):
-        url = self.args.profile
-        log('Profiling URL "{}".'.format(url))
-        sudo_uid = os.getenv("SUDO_UID")
-        command = 'sudo -u #{} python3 browser.py {}'.format(sudo_uid, url)
-        sniffer = AsyncSniffer(iface=self.args.interface, 
-                               filter='tcp and port {} and host {}'.format(self.args.port, self.args.target))
-        sniffer.start()
-        subprocess.run(command.split())
-        sniffer.stop()
-        return sniffer.results
 
 ''' Stores features for clustering and prediction '''
 class PacketInfo():
@@ -53,10 +36,12 @@ class PacketInfo():
 ''' Driver class for analyzing packet captures '''
 class PacketAnalyzer():
     ''' Analyzes the packet capture on initialization '''
-    def __init__(self, pkts, args):
+    def __init__(self, args, pkts, quiet=False):
         self.args = args
-        self.ip_to_name = dict()
         self.pkts = []
+        self.quiet = quiet
+        self.ip_to_name = dict()
+
         dbg('Analyzing {} packets.'.format(len(pkts)))
         tls_cnt = 0
         for pkt in pkts:
@@ -128,7 +113,8 @@ class PacketAnalyzer():
                     dbg('SNI disable request from {}.'.format(server_ip))
                 else:
                     name = str(ext_data.servername, 'utf-8')
-                    log('SNI: {} = {}.'.format(name, server_ip))
+                    if not self.quiet:
+                        log('SNI: {} = {}.'.format(name, server_ip))
                     self.ip_to_name[server_ip] = name
 
     def _cluster_within_host(self):
@@ -143,13 +129,15 @@ class PacketAnalyzer():
             if seg_size/med_size > SEGMENT_FILTER_THRESHOLD:
                 start_time = min(time_segment)
                 end_time = max(time_segment)
-                log('\tFound cluster of {} requests starting at {} and ending at {}.'.format(
-                    seg_size, timestamp(start_time), timestamp(end_time)))
+                if not self.quiet:
+                    log('\tFound cluster of {} requests starting at {} and ending at {}.'.format(
+                        seg_size, timestamp(start_time), timestamp(end_time)))
                 # reconstruct the segment
                 segment = self.pkts[cur_pkt:cur_pkt+seg_size]
                 clusters.append(segment)
             else:
-                log('\tIgnoring ephemeral packet cluster of size {}.'.format(seg_size))
+                if not self.quiet:
+                    log('\tIgnoring ephemeral packet cluster of size {}.'.format(seg_size))
             cur_pkt += seg_size
         return clusters
 
@@ -160,111 +148,26 @@ class PacketAnalyzer():
         cluster = list(filter(lambda pkt: not domains.ignore(pkt.host), cluster))
         cluster_size = len(cluster)
         if cluster_size == 0:
-            return
-        log('Cluster of {} packets beginning at {}:'.format(cluster_size, timestamp(cluster[0].time)))
+            return []
+        if not self.quiet:
+            log('Cluster of {} packets beginning at {}:'.format(cluster_size, timestamp(cluster[0].time)))
         # check which hosts have been visited in this cluster
         hosts = set()
         for pkt in cluster:
             hosts.add(pkt.host)
-        log('Hosts accessed: {}'.format(hosts))
+        if not self.quiet:
+            log('Hosts accessed: {}'.format(hosts))
         # print all packets
         for pkt in cluster:
             dbg('\t{}'.format(str(pkt)))
+        return cluster
 
     ''' Cluster and print results '''
     def stats(self):
         clusters = self._cluster_within_host()
+        result = []
         for cluster in clusters:
-            self._analyze_cluster(cluster)
-
-def setup_interface(args):
-    # TODO port to OS besides Ubuntu
-    log('Setting network interface to monitor mode. You may lose internet connection for the duration of the program.')
-    subprocess.run('airmon-ng check kill'.split(), stdout=subprocess.DEVNULL)
-    subprocess.run('airmon-ng start {}'.format(args.interface).split(), stdout=subprocess.DEVNULL)
-    args.interface += 'mon'
-    subprocess.run('iwconfig {} chan {}'.format(args.interface, args.channel).split(), stdout=subprocess.DEVNULL)
-
-def reset_interface(args):
-    # TODO port to OS besides Ubuntu
-    log('Resetting network interface.')
-    subprocess.run('airmon-ng stop {}'.format(args.interface).split(), stdout=subprocess.DEVNULL)
-    args.interface = args.interface[:-3]
-    subprocess.run('ip link set dev {} up'.format(args.interface).split(), stdout=subprocess.DEVNULL)
-    subprocess.run('service NetworkManager restart'.split(), stdout=subprocess.DEVNULL)
-
-def parse_args():
-    parser = argparse.ArgumentParser(description=
-            'Sniff and or analyze packet captures to predict browing traffic over HTTPS.')
-    parser.add_argument('-i', '--interface', type=str, help=
-            'Specifies the interface to sniff on.')
-    parser.add_argument('-f', '--file', type=str, help=
-            'Specifies a pcap file to read from instead of sniffing WiFi traffic.')
-    parser.add_argument('-t', '--target', type=str, help=
-            'Specifies a target IP to sniff/analyze.')
-    parser.add_argument('-p', '--profile', type=str, help=
-            'Specifies a URL to profile.')
-    parser.add_argument('-c', '--channel', type=int, default=3, help=
-            'Specifies the wireless channel to sniff traffic on.')
-    parser.add_argument('--port', type=int, default=443, help=
-            'Specifies the port to sniff and analyze traffic on.')
-    parser.add_argument('-d', '--debug', action='store_true', default=False, help=
-            'Prints debug information.')
-    parser.add_argument('-r', '--reset', action='store_true', default=False, help=
-            'Resets the interface, in case the program crashed before being able to reset it normally.')
-    parser.add_argument('-l', '--list-targets', action='store_true', default=False, help=
-            'Scans the channel looking for target IPs.')
-    # TODO validate args
-    return parser.parse_args()
-
-def main():
-    # TODO check that we're running as root
-    args = parse_args()
-    utils.DEBUG = args.debug
-    if args.reset:
-        if not 'mon' in args.interface:
-            args.interface += 'mon'
-        reset_interface(args)
-        return
-
-    if args.file:
-        # Read packets from file
-        pkts = sniff(offline=args.file)
-    elif args.profile:
-        # Profile a URL
-        p = Profiler(args)
-        pkts = p.profile()
-    elif args.list_targets:
-        # Sniff all packets to find
-        setup_interface(args)
-        log('Listening for targets on interface "{}" on channel {}.'.format(args.interface, args.channel))
-        pkts = sniff(iface=args.interface, count=1000, filter='tcp and port {}'.format(args.port))
-        reset_interface(args)
-        targets = set()
-        for pkt in pkts:
-            if not IP in pkt:
-                continue
-            ip_pkt = pkt[IP]
-            local_ip = re.compile('192.168.*')
-            if local_ip.match(ip_pkt.dst):
-                targets.add(ip_pkt.dst)
-            if local_ip.match(ip_pkt.src):
-                targets.add(ip_pkt.src)
-        log('Found {} possible target(s):'.format(len(targets)))
-        for target in targets:
-            log('\t{}'.format(target))
-        return
-    else:
-        # Sniff packets 
-        setup_interface(args)
-        log('Listening for HTTPS traffic on interface "{}" on channel {}.'.format(args.interface, args.channel))
-        pkts = sniff(iface=args.interface, count=1000, filter='tcp and port {} and host {}'.format(args.port, args.target))
-        reset_interface(args)
-
-    # Analyze packets
-    analysis = PacketAnalyzer(pkts, args)
-    analysis.stats()
-
-if __name__ == '__main__':
-    main()
+            c = self._analyze_cluster(cluster)
+            result.append(c)
+        return result
 
