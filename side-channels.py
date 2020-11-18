@@ -1,10 +1,15 @@
 import utils
 from utils import *
-from profile import Profiler
+from profile import Profiler, Signature
 from analyze import PacketAnalyzer
+
+from scapy.all import sniff
+from scapy.layers.inet import IP
 
 import subprocess
 import argparse
+import pickle
+import re
 
 def setup_interface(args):
     # TODO port to OS besides Ubuntu
@@ -43,6 +48,8 @@ def parse_args():
             'Resets the interface, in case the program crashed before being able to reset it normally.')
     parser.add_argument('-l', '--list-targets', action='store_true', default=False, help=
             'Scans the channel looking for target IPs.')
+    parser.add_argument('-m', '--match', type=str, help=
+            'Check for a particular site.')
     # TODO validate args
     return parser.parse_args()
 
@@ -56,20 +63,20 @@ def main():
         reset_interface(args)
         return
 
-    if args.file:
-        # Read packets from file
-        pkts = sniff(offline=args.file)
-    elif args.profile:
+    if args.profile:
         # Profile a URL
         p = Profiler(args)
         p.profile()
         return
     elif args.list_targets:
         # Sniff all packets to find
-        setup_interface(args)
-        log('Listening for targets on interface "{}" on channel {}.'.format(args.interface, args.channel))
-        pkts = sniff(iface=args.interface, count=1000, filter='tcp and port {}'.format(args.port))
-        reset_interface(args)
+        if args.file:
+            pkts = sniff(offline=args.file)
+        else:
+            setup_interface(args)
+            log('Listening for targets on interface "{}" on channel {}.'.format(args.interface, args.channel))
+            pkts = sniff(iface=args.interface, count=1000, filter='tcp and port {}'.format(args.port))
+            reset_interface(args)
         targets = set()
         for pkt in pkts:
             if not IP in pkt:
@@ -84,6 +91,9 @@ def main():
         for target in targets:
             log('\t{}'.format(target))
         return
+    elif args.file:
+        # Read packets from file
+        pkts = sniff(offline=args.file)
     else:
         # Sniff packets 
         setup_interface(args)
@@ -91,9 +101,23 @@ def main():
         pkts = sniff(iface=args.interface, count=1000, filter='tcp and port {} and host {}'.format(args.port, args.target))
         reset_interface(args)
 
-    # Analyze packets
-    analysis = PacketAnalyzer(args, pkts)
-    analysis.stats()
+    if args.match:
+        with open(args.match, 'rb') as f:
+            target_signature = pickle.load(f)
+        analysis = PacketAnalyzer(args, pkts, quiet=True)
+        clusters = analysis.stats()
+        for cluster in clusters:
+            log('Analyzing cluster of {} packets starting at {} and ending at {}:'.format(
+                len(cluster), timestamp(cluster[0].time), timestamp(cluster[-1].time)))
+            signature = Signature(cluster)
+            if target_signature.matches(signature):
+                log('\tCluster matches signature for {}!'.format(args.match))
+            else:
+                log('\tCluster doesn\'t match signature for {}.'.format(args.match))
+    else:
+        # Analyze packets
+        analysis = PacketAnalyzer(args, pkts)
+        analysis.stats()
 
 if __name__ == '__main__':
     main()

@@ -1,4 +1,5 @@
 from functools import lru_cache
+import re
 
 IGNORE_HOSTS = {
                 # Firefox domains that can be ignored (https://wiki.mozilla.org/Websites/Domain_List)
@@ -38,4 +39,15 @@ def ignore(domain):
         if '.'.join(domains[i:]) in IGNORE_HOSTS:
             return True
     return False
+
+def split_url(url):
+    tokens = re.split('/+', url)
+    assert len(tokens) >= 2
+    protocol = tokens[0]
+    assert protocol == 'http:' or protocol == 'https:'
+    domain = tokens[1]
+    if len(tokens) == 2:
+        resource = ''
+    resource = '-'.join(tokens[2:])
+    return domain, resource
 

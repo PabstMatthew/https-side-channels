@@ -6,7 +6,6 @@ from scapy.layers.l2 import Ether
 from scapy.layers.inet import IP, TCP
 from scapy.layers.tls.all import *
 from scapy.layers.dot11 import *
-from scapy.all import sniff
 
 import os
 import sys
@@ -94,6 +93,7 @@ class PacketAnalyzer():
         tls_pkt = tcp_pkt[TLS]
         tls_len = tls_pkt.len
         server_name = self.ip_to_name[server_ip] if server_ip in self.ip_to_name else server_ip
+        # process different TLS packet types
         preamble = '[{}]: '.format(timestamp(pkt_time))
         preamble += '{} -> client'.format(server_name) if from_server else 'client -> {}'.format(server_name)
         if TLSChangeCipherSpec in tls_pkt:
@@ -102,8 +102,11 @@ class PacketAnalyzer():
             dbg('{}: Alert.'.format(preamble))
         elif TLSApplicationData in tls_pkt:
             dbg('{}: {} bytes of data.'.format(preamble, tls_len))
-            pkt_info = PacketInfo(pkt_time, tls_len, server_name, from_server)
-            self.pkts.append(pkt_info)
+            if server_ip in self.ip_to_name and not domains.ignore(server_name):
+                # ignore hosts with no domain name
+                # filter out random analytics hosts
+                pkt_info = PacketInfo(pkt_time, tls_len, server_name, from_server)
+                self.pkts.append(pkt_info)
         elif TLSClientHello in tls_pkt:
             dbg('{}: Handshake.'.format(preamble))
             shake = tls_pkt[TLSClientHello]
@@ -117,7 +120,7 @@ class PacketAnalyzer():
                         log('SNI: {} = {}.'.format(name, server_ip))
                     self.ip_to_name[server_ip] = name
 
-    def _cluster_within_host(self):
+    def _form_clusters(self):
         clusters = []
         self.pkts.sort(key=lambda pkt: pkt.time)
         pkt_times = list(x.time for x in self.pkts)
@@ -142,10 +145,6 @@ class PacketAnalyzer():
         return clusters
 
     def _analyze_cluster(self, cluster):
-        # ignore hosts with no domain name
-        cluster = list(filter(lambda pkt: not re.match('\d+\.\d+\.\d+\.\d+', pkt.host), cluster))
-        # filter out random analytics hosts
-        cluster = list(filter(lambda pkt: not domains.ignore(pkt.host), cluster))
         cluster_size = len(cluster)
         if cluster_size == 0:
             return []
@@ -164,7 +163,7 @@ class PacketAnalyzer():
 
     ''' Cluster and print results '''
     def stats(self):
-        clusters = self._cluster_within_host()
+        clusters = self._form_clusters()
         result = []
         for cluster in clusters:
             c = self._analyze_cluster(cluster)
