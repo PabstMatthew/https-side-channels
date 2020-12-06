@@ -7,3 +7,4 @@ tar -xvzf geckodriver-v0.28.0-linux64.tar.gz
 rm geckodriver-v0.28.0-linux64.tar.gz
 chmod +x geckodriver
 sudo mv geckodriver /usr/bin/
+mkdir samples profiles
