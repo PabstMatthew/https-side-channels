@@ -2,7 +2,7 @@ from datetime import datetime
 
 DEBUG = True
 LOG = True
-THRESHOLD = 800 * 1000
+THRESHOLD = 500 * 1000 # (500 ms)
 
 BLUE = '\033[94m'
 GREEN = '\u001b[32m'

@@ -7,6 +7,7 @@ IGNORE_HOSTS = {
                 'services.mozilla.com',
                 'spocs.getpocket.com',
                 'mozilla.org',
+                'safebrowsing.googleapis.com',
                 # Apple domains that can be ignored (https://support.apple.com/en-us/HT201999)
                 'itunes.apple.com',
                 'smoot.apple.com',
@@ -28,6 +29,10 @@ IGNORE_HOSTS = {
                 'digicert.com',
                 'symcb.com',
                 'symcd.com',
+                # Generic Internet hosts
+                'cloudfront.net',
+                'akamaitechnologies.com',
+                '1e100.net',
                 }
 
 

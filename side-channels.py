@@ -1,6 +1,7 @@
 import utils
 from utils import *
-from profile import Profiler, Signature
+from profile import Profiler, Predictor
+from evaluate import Sampler, Evaluation
 from analyze import PacketAnalyzer
 
 from scapy.all import sniff
@@ -37,7 +38,11 @@ def parse_args():
     parser.add_argument('-t', '--target', type=str, help=
             'Specifies a target IP to sniff/analyze.')
     parser.add_argument('-p', '--profile', type=str, help=
-            'Specifies a URL to profile.')
+            'Specifies a file containing a list of URLs to profile.')
+    parser.add_argument('-s', '--sample', type=str, help=
+            'Specifies a file containing a list of URLs to create pcap samples of.')
+    parser.add_argument('-e', '--evaluate', type=str, help=
+            'Specifies a file containing a list of URLs to evaluate from pcap samples.')
     parser.add_argument('-c', '--channel', type=int, default=3, help=
             'Specifies the wireless channel to sniff traffic on.')
     parser.add_argument('--port', type=int, default=443, help=
@@ -49,7 +54,7 @@ def parse_args():
     parser.add_argument('-l', '--list-targets', action='store_true', default=False, help=
             'Scans the channel looking for target IPs.')
     parser.add_argument('-m', '--match', type=str, help=
-            'Check for a particular site.')
+            'Attempt to guess browsing history based on the specified profile.')
     # TODO validate args
     return parser.parse_args()
 
@@ -64,9 +69,19 @@ def main():
         return
 
     if args.profile:
-        # Profile a URL
+        # Profile some URL
         p = Profiler(args)
         p.profile()
+        return
+    elif args.sample:
+        # Sample some URLs
+        s = Sampler(args)
+        s.sample()
+        return
+    elif args.evaluate:
+        # Evaluate on a test set
+        e = Evaluation(args)
+        e.evaluate()
         return
     elif args.list_targets:
         # Sniff all packets to find
@@ -103,17 +118,15 @@ def main():
 
     if args.match:
         with open(args.match, 'rb') as f:
-            target_signature = pickle.load(f)
+            urls, pkt_to_idx = pickle.load(f)
+        predictor = Predictor(urls, pkt_to_idx)
         analysis = PacketAnalyzer(args, pkts, quiet=True)
         clusters = analysis.stats()
         for cluster in clusters:
             log('Analyzing cluster of {} packets starting at {} and ending at {}:'.format(
                 len(cluster), timestamp(cluster[0].time), timestamp(cluster[-1].time)))
-            signature = Signature(cluster)
-            if target_signature.matches(signature):
-                log('\tCluster matches signature for {}!'.format(args.match))
-            else:
-                log('\tCluster doesn\'t match signature for {}.'.format(args.match))
+            predictions = predictor.predict(cluster)
+            log('\tPredicted {}'.format(str(predictions)))
     else:
         # Analyze packets
         analysis = PacketAnalyzer(args, pkts)
