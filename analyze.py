@@ -110,13 +110,7 @@ class PacketAnalyzer():
         # process different TLS packet types
         preamble = '[{}]: '.format(timestamp(pkt_time))
         preamble += '{} -> client'.format(server_name) if from_server else 'client -> {}'.format(server_name)
-        if TLSChangeCipherSpec in tls_pkt:
-            if not self.quiet:
-                dbg('{}: Change cipher spec.'.format(preamble))
-        elif TLSAlert in tls_pkt:
-            if not self.quiet:
-                dbg('{}: Alert.'.format(preamble))
-        elif TLSApplicationData in tls_pkt:
+        if TLSApplicationData in tls_pkt:
             if not self.quiet:
                 dbg('{}: {} bytes of data.'.format(preamble, tls_len))
             if server_ip in self.ip_to_name and not domains.ignore(server_name):
@@ -124,6 +118,13 @@ class PacketAnalyzer():
                 # filter out random analytics hosts
                 pkt_info = PacketInfo(pkt_time, tls_len, server_name, from_server)
                 self.pkts.append(pkt_info)
+        '''
+        if TLSChangeCipherSpec in tls_pkt:
+            if not self.quiet:
+                dbg('{}: Change cipher spec.'.format(preamble))
+        elif TLSAlert in tls_pkt:
+            if not self.quiet:
+                dbg('{}: Alert.'.format(preamble))
         elif TLSClientHello in tls_pkt:
             if not self.quiet:
                 dbg('{}: Handshake.'.format(preamble))
@@ -138,6 +139,7 @@ class PacketAnalyzer():
                     if not self.quiet:
                         dbg('SNI: {} = {}.'.format(name, server_ip))
                     #self.ip_to_name[server_ip] = name
+        '''
 
     def _form_clusters(self):
         clusters = []

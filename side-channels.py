@@ -7,26 +7,9 @@ from analyze import PacketAnalyzer
 from scapy.all import sniff
 from scapy.layers.inet import IP
 
-import subprocess
 import argparse
 import pickle
 import re
-
-def setup_interface(args):
-    # TODO port to OS besides Ubuntu
-    log('Setting network interface to monitor mode. You may lose internet connection for the duration of the program.')
-    subprocess.run('airmon-ng check kill'.split(), stdout=subprocess.DEVNULL)
-    subprocess.run('airmon-ng start {}'.format(args.interface).split(), stdout=subprocess.DEVNULL)
-    args.interface += 'mon'
-    subprocess.run('iwconfig {} chan {}'.format(args.interface, args.channel).split(), stdout=subprocess.DEVNULL)
-
-def reset_interface(args):
-    # TODO port to OS besides Ubuntu
-    log('Resetting network interface.')
-    subprocess.run('airmon-ng stop {}'.format(args.interface).split(), stdout=subprocess.DEVNULL)
-    args.interface = args.interface[:-3]
-    subprocess.run('ip link set dev {} up'.format(args.interface).split(), stdout=subprocess.DEVNULL)
-    subprocess.run('service NetworkManager restart'.split(), stdout=subprocess.DEVNULL)
 
 def parse_args():
     parser = argparse.ArgumentParser(description=
@@ -35,7 +18,7 @@ def parse_args():
             'Specifies the interface to sniff on.')
     parser.add_argument('-f', '--file', type=str, help=
             'Specifies a pcap file to read from instead of sniffing WiFi traffic.')
-    parser.add_argument('-t', '--target', type=str, help=
+    parser.add_argument('-t', '--target', type=str, default=get_local_ip(), help=
             'Specifies a target IP to sniff/analyze.')
     parser.add_argument('-p', '--profile', type=str, help=
             'Specifies a file containing a list of URLs to profile.')
@@ -43,6 +26,8 @@ def parse_args():
             'Specifies a file containing a list of URLs to create pcap samples of.')
     parser.add_argument('-e', '--evaluate', type=str, help=
             'Specifies a file containing a list of URLs to evaluate from pcap samples.')
+    parser.add_argument('--remote', action='store_true', help=
+            'When in evaluate mode, gets packets by sniffing.')
     parser.add_argument('-c', '--channel', type=int, default=3, help=
             'Specifies the wireless channel to sniff traffic on.')
     parser.add_argument('--port', type=int, default=443, help=

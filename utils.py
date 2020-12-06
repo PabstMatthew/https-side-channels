@@ -1,4 +1,6 @@
 from datetime import datetime
+import socket
+import subprocess
 
 DEBUG = True
 LOG = True
@@ -40,4 +42,32 @@ def segment_times(times):
     segment.append(times[-1])
     result.append(segment)
     return result
+
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # doesn't even have to be reachable
+        s.connect(('10.255.255.255', 1))
+        IP = s.getsockname()[0]
+    except Exception:
+        return None
+    finally:
+        s.close()
+    return IP
+
+def setup_interface(args):
+    # TODO port to OS besides Ubuntu
+    log('Setting network interface to monitor mode. You may lose internet connection for the duration of the program.')
+    subprocess.run('airmon-ng check kill'.split(), stdout=subprocess.DEVNULL)
+    subprocess.run('airmon-ng start {}'.format(args.interface).split(), stdout=subprocess.DEVNULL)
+    args.interface += 'mon'
+    subprocess.run('iwconfig {} chan {}'.format(args.interface, args.channel).split(), stdout=subprocess.DEVNULL)
+
+def reset_interface(args):
+    # TODO port to OS besides Ubuntu
+    log('Resetting network interface.')
+    subprocess.run('airmon-ng stop {}'.format(args.interface).split(), stdout=subprocess.DEVNULL)
+    args.interface = args.interface[:-3]
+    subprocess.run('ip link set dev {} up'.format(args.interface).split(), stdout=subprocess.DEVNULL)
+    subprocess.run('service NetworkManager restart'.split(), stdout=subprocess.DEVNULL)
 

@@ -2,10 +2,12 @@ from utils import *
 from analyze import PacketAnalyzer 
 from profile import Predictor
 
-from scapy.all import sniff
+from scapy.all import sniff, AsyncSniffer
 
 import os 
 import pickle
+import subprocess
+import time
 
 N = 5
 
@@ -51,8 +53,20 @@ class Evaluation():
         correct_top5 = 0
         for url in urls:
             for i in range(N):
-                fname = 'samples/{}-{}.pcap'.format(url.replace('/', '-'), str(i))
-                pkts = sniff(offline=fname)
+                if self.args.remote:
+                    setup_interface(self.args)
+                    sniffer = AsyncSniffer(iface=self.args.interface,
+                                           filter='tcp and port {} and host {}'.format(self.args.port, self.args.target))
+                    sniffer.start()
+                    dbg('Press [Enter] when the browsing finishes.')
+                    input()
+                    sniffer.stop()
+                    pkts = sniffer.results
+                    reset_interface(self.args)
+                    time.sleep(5)
+                else:
+                    fname = 'samples/{}-{}.pcap'.format(url.replace('/', '-'), str(i))
+                    pkts = sniff(offline=fname)
                 analysis = PacketAnalyzer(self.args, pkts, quiet=True)
                 clusters = analysis.stats()
                 # assuming there's only one cluster
